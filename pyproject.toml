@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nodemaven-mcp"
+version = "0.1.0"
+description = "MCP server for NodeMaven residential proxies: proxy strings with geo-targeting and sticky sessions, connection checks, locations and usage."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.3,<3",
+    "nodemaven>=0.1.5",
+]
+keywords = ["mcp", "proxy", "residential-proxy", "nodemaven", "web-scraping"]
+
+[project.scripts]
+nodemaven-mcp = "nodemaven_mcp.server:main"
+
+[project.urls]
+Source = "https://github.com/nodemaven/nodemaven-mcp"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nodemaven_mcp"]
+
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "tests/", "README.md", "LICENSE", "pyproject.toml"]

@@ -1,0 +1,41 @@
+# Offline tests against the installed package, on every supported Python.
+# No credentials and no network: the API client is replaced by a fake.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          - python-version: "3.12"
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install . pytest
+      - run: python -m pytest -q tests/test_server.py
+
+  # One stable name for branch protection, independent of the matrix.
+  ci-ok:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: every matrix job succeeded
+        run: test "${{ needs.test.result }}" = "success"
