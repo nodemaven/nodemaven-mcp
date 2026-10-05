@@ -39,6 +39,7 @@ class FakeClient:
         return {"labels": ["00:00"], "data": [5]}
 
     def domain_statistics(self, proxy_username, **filters):
+        self.calls.append(("domain_statistics", filters))
         return Page(results=[["www.amazon.com", 40, 34756266],
                              ["speed.cloudflare.com", 46, 47147592],
                              ["cdn.jsdelivr.net", 59, 60633404],
@@ -131,6 +132,7 @@ def test_missing_api_key_is_reported(monkeypatch):
 
 def test_top_domains_labels_columns_and_sorts_by_bytes(fake):
     out = srv.top_domains(limit=2)
+    assert fake.calls[-1] == ("domain_statistics", {"limit": 1000, "period": "today"})
     assert out["rows"] == [
         {"domain": "cdn.jsdelivr.net", "requests": 59, "bytes": 60633404},
         {"domain": "speed.cloudflare.com", "requests": 46, "bytes": 47147592},
@@ -141,3 +143,8 @@ def test_locations_omit_unknown_total(fake):
     assert "total" in srv.list_locations("countries")
     fake.countries = lambda **f: Page(results=[])
     assert "total" not in srv.list_locations("countries")
+
+
+def test_every_tool_is_marked_read_only():
+    tools = asyncio.run(srv.server.list_tools())
+    assert all(t.annotations and t.annotations.read_only_hint for t in tools)

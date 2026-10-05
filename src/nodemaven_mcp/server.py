@@ -16,11 +16,13 @@ from urllib.parse import quote
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from nodemaven import Client, NodeMavenError, Proxy
 
 PASSWORD_PLACEHOLDER = "<PROXY_PASSWORD>"
 SOCKS5_PORT = 1080
 MAX_ROWS = 100
+DOMAIN_FETCH_LIMIT = 1000
 
 ACCOUNT_FIELDS = ("proxy_username", "data", "subscription_status", "is_traffic_frozen")
 SUB_USER_FIELDS = (
@@ -73,6 +75,8 @@ class _State:
 
 state = _State()
 
+READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=True)
+
 
 def _reveal_password() -> bool:
     return os.environ.get("NODEMAVEN_MCP_REVEAL_PASSWORD") == "1"
@@ -92,7 +96,7 @@ def _build_proxy(protocol: str, **params: Any) -> Proxy:
     return Proxy(login=login, password=password, port=port, **_params(**params))
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def proxy_url(
     country: Optional[str] = None,
     region: Optional[str] = None,
@@ -139,7 +143,7 @@ def proxy_url(
     }
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def check_proxy(
     country: Optional[str] = None,
     region: Optional[str] = None,
@@ -178,7 +182,7 @@ def check_proxy(
     }
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def list_locations(
     kind: Literal["countries", "regions", "cities", "isps"],
     country_code: Optional[str] = None,
@@ -207,7 +211,7 @@ def list_locations(
     return out
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def account_status() -> dict[str, Any]:
     """Remaining traffic (bytes), subscription status and whether traffic is frozen."""
     try:
@@ -234,7 +238,7 @@ def _stats_filters(period: Optional[str], start: Optional[str], end: Optional[st
     return _params(period=period, start=start, end=end)
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def traffic_stats(
     period: Optional[Literal["today", "hours24"]] = None,
     start: Optional[str] = None,
@@ -252,7 +256,7 @@ def traffic_stats(
     return {"labels": stats.get("labels", []), "data": stats.get("data", [])}
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def top_domains(
     period: Optional[Literal["today", "hours24"]] = None,
     start: Optional[str] = None,
@@ -265,7 +269,9 @@ def top_domains(
     """
     try:
         login = state.credentials()[0]
-        page = state.client().domain_statistics(login, **_stats_filters(period, start, end))
+        page = state.client().domain_statistics(
+            login, limit=DOMAIN_FETCH_LIMIT, **_stats_filters(period, start, end)
+        )
     except NodeMavenError as e:
         raise ToolError(str(e)) from e
     rows = [r for r in map(_domain_row, page.results) if r is not None]
@@ -273,7 +279,7 @@ def top_domains(
     return {"rows": rows[: max(1, min(limit, MAX_ROWS))]}
 
 
-@server.tool()
+@server.tool(annotations=READ_ONLY)
 def list_sub_users() -> dict[str, Any]:
     """Sub-users of the account with their traffic usage and limits. No passwords."""
     try:
