@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nodemaven/nodemaven-mcp",
+  "title": "NodeMaven",
+  "description": "NodeMaven residential proxies: geo-targeted proxy URLs, sticky sessions, checks and usage",
+  "repository": {
+    "url": "https://github.com/nodemaven/nodemaven-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "nodemaven-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NODEMAVEN_APIKEY",
+          "description": "API key from the NodeMaven dashboard",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
