@@ -26,6 +26,9 @@ class FakeClient:
         }
 
     def sub_users(self, **filters):
+        self.calls.append(("sub_users", filters))
+        if filters.get("page", 1) > 1:
+            return Page(results=[])
         return Page(results=[{"id": "1", "proxy_username": "sub1", "proxy_password": SECRET,
                               "is_default_user": False, "is_traffic_limited": True,
                               "used_traffic": 10, "traffic_limit": 100}])
@@ -114,7 +117,7 @@ def test_sub_users_drop_passwords(fake):
 def test_locations_pass_filters_and_cap_limit(fake):
     out = srv.list_locations("countries", limit=5000)
     assert out["rows"] == [{"name": "United States", "code": "us"}]
-    assert fake.calls[-1] == ("countries", {"connection_type": "residential", "limit": "100"})
+    assert fake.calls[-1] == ("countries", {"connection_type": "residential", "limit": "100", "offset": "0"})
 
 
 def test_stats_default_to_today(fake):
@@ -148,3 +151,26 @@ def test_locations_omit_unknown_total(fake):
 def test_every_tool_is_marked_read_only():
     tools = asyncio.run(srv.server.list_tools())
     assert all(t.annotations and t.annotations.read_only_hint for t in tools)
+
+
+def test_locations_page_with_offset(fake):
+    fake.countries = lambda **f: (fake.calls.append(("countries", f)),
+                                  Page(results=[{"code": c} for c in "abc"], count=7))[1]
+    out = srv.list_locations("countries", limit=3, offset=3)
+    assert fake.calls[-1][1]["offset"] == "3"
+    assert out["next_offset"] == 6 and out["total"] == 7
+    fake.countries = lambda **f: Page(results=[{"code": "z"}], count=7)
+    assert "next_offset" not in srv.list_locations("countries", limit=3, offset=6)
+
+
+def test_locations_without_count_page_while_full(fake):
+    fake.countries = lambda **f: Page(results=[{"code": c} for c in "ab"])
+    assert srv.list_locations("countries", limit=2)["next_offset"] == 2
+    assert "next_offset" not in srv.list_locations("countries", limit=5)
+
+
+def test_sub_users_page(fake):
+    first = srv.list_sub_users()
+    assert first["next_page"] == 2 and fake.calls[-1] == ("sub_users", {"page": 1})
+    last = srv.list_sub_users(page=2)
+    assert last["rows"] == [] and "next_page" not in last

@@ -189,25 +189,34 @@ def list_locations(
     region_code: Optional[str] = None,
     connection_type: Literal["residential", "mobile"] = "residential",
     limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """List locations available for targeting, with the codes proxy_url takes.
 
     regions need country_code; cities and isps can be narrowed by country_code
-    and region_code.
+    and region_code. At most 100 rows per call: when next_offset is returned,
+    call again with offset=next_offset for the rest.
     """
+    limit = max(1, min(limit, MAX_ROWS))
+    offset = max(0, offset)
     filters = _params(
         country__code=country_code.lower() if country_code else None,
         region__code=region_code,
         connection_type=connection_type,
-        limit=max(1, min(limit, MAX_ROWS)),
+        limit=limit,
+        offset=offset,
     )
     try:
         page = getattr(state.client(), kind)(**filters)
     except NodeMavenError as e:
         raise ToolError(str(e)) from e
-    out: dict[str, Any] = {"kind": kind, "rows": list(page.results)[:MAX_ROWS]}
+    rows = list(page.results)[:limit]
+    out: dict[str, Any] = {"kind": kind, "offset": offset, "rows": rows}
     if page.count is not None:
         out["total"] = page.count
+    more = offset + len(rows) < page.count if page.count is not None else len(rows) == limit
+    if more:
+        out["next_offset"] = offset + len(rows)
     return out
 
 
@@ -280,13 +289,22 @@ def top_domains(
 
 
 @server.tool(annotations=READ_ONLY)
-def list_sub_users() -> dict[str, Any]:
-    """Sub-users of the account with their traffic usage and limits. No passwords."""
+def list_sub_users(page: int = 1) -> dict[str, Any]:
+    """Sub-users of the account with their traffic usage and limits. No passwords.
+
+    Paged from page 1. When next_page is returned, call again with it for the
+    rest; a page past the end comes back empty.
+    """
+    page = max(1, page)
     try:
-        page = state.client().sub_users()
+        result = state.client().sub_users(page=page)
     except NodeMavenError as e:
         raise ToolError(str(e)) from e
-    return {"rows": [_pick(row, SUB_USER_FIELDS) for row in page.results]}
+    rows = [_pick(row, SUB_USER_FIELDS) for row in result.results]
+    out: dict[str, Any] = {"page": page, "rows": rows}
+    if rows:
+        out["next_page"] = page + 1
+    return out
 
 
 def main() -> None:

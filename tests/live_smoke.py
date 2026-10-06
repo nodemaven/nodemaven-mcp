@@ -18,12 +18,15 @@ from nodemaven import Client
 CALLS = (
     ("account_status", {}),
     ("list_locations", {"kind": "countries", "limit": 3}),
+    ("list_locations", {"kind": "regions", "country_code": "us", "limit": 100}),
+    ("list_locations", {"kind": "regions", "country_code": "us", "limit": 100, "offset": 100}),
     ("proxy_url", {"country": "us", "session_id": "smoke1", "ttl": "10m"}),
     ("check_proxy", {"country": "us"}),
     ("check_proxy", {"country": "us", "session_id": "smoke1", "ttl": "10m"}),
     ("traffic_stats", {}),
     ("top_domains", {"limit": 3}),
     ("list_sub_users", {}),
+    ("list_sub_users", {"page": 2}),
 )
 
 
@@ -46,7 +49,10 @@ async def main() -> int:
                     print(f"{name}: LEAK - result contains the proxy password")
                     continue
                 if name == "list_sub_users" and not result.is_error:
-                    text = f"{len(payload.get('rows', []))} sub-users"
+                    text = f"{len(payload.get('rows', []))} sub-users, next_page={payload.get('next_page')}"
+                elif name == "list_locations" and args.get("kind") == "regions" and not result.is_error:
+                    text = (f"{len(payload.get('rows', []))} rows, total={payload.get('total')}, "
+                            f"next_offset={payload.get('next_offset')}")
                 print(f"{name} {args}: error={result.is_error} {text[:300]}")
     print("LEAKS:", leaks)
     return 1 if leaks else 0
