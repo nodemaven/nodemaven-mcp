@@ -1,9 +1,11 @@
 import asyncio
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
-from nodemaven import Page
+from nodemaven import NotFoundError, Page
 
 import nodemaven_mcp.server as srv
 
@@ -41,6 +43,40 @@ class FakeClient:
         self.calls.append(("statistics_data", proxy_username, filters))
         return {"labels": ["00:00"], "data": [5]}
 
+    def create_sub_user(self, proxy_username, proxy_password, **extra):
+        self.calls.append(("create_sub_user", proxy_username, proxy_password, extra))
+        return {"id": "7", "proxy_username": proxy_username, "proxy_password": proxy_password,
+                "is_default_user": False, "is_traffic_limited": bool(extra),
+                "traffic_limit": extra.get("traffic_limit", 0)}
+
+    def update_sub_user(self, sub_user_id, **changes):
+        self.calls.append(("update_sub_user", sub_user_id, changes))
+        return {"id": sub_user_id, "proxy_username": "sub1", "proxy_password": SECRET, **changes}
+
+    def reset_sub_user_usage(self, ids):
+        self.calls.append(("reset_sub_user_usage", ids))
+        return [{"id": i, "proxy_username": "sub1", "proxy_password": SECRET, "used_traffic": 0}
+                for i in ids]
+
+    def delete_sub_user(self, sub_user_id):
+        self.calls.append(("delete_sub_user", sub_user_id))
+        return {"message": "deleted"}
+
+    def whitelist_ips(self, **filters):
+        self.calls.append(("whitelist_ips", filters))
+        if filters.get("page", 1) > 1:
+            raise NotFoundError("404 past the end")
+        return Page(results=[{"id": 3, "ip": "192.0.2.7", "user_id": 99, "protocol": "HTTP",
+                              "ports": [10000, 10001], "number_of_proxies": 2}])
+
+    def upsert_whitelist_ip(self, ip, ports_count, **extra):
+        self.calls.append(("upsert_whitelist_ip", ip, ports_count, extra))
+        return {"ip_id": 3, "message": "created"}
+
+    def delete_whitelist_ip(self, ip_id):
+        self.calls.append(("delete_whitelist_ip", ip_id))
+        return {"message": "deleted"}
+
     def domain_statistics(self, proxy_username, **filters):
         self.calls.append(("domain_statistics", filters))
         return Page(results=[["www.amazon.com", 40, 34756266],
@@ -52,7 +88,7 @@ class FakeClient:
 @pytest.fixture
 def fake(monkeypatch):
     for var in ("NODEMAVEN_LOGIN", "NODEMAVEN_PASSWORD", "NODEMAVEN_MCP_REVEAL_PASSWORD",
-                "NODEMAVEN_HOST", "NODEMAVEN_PORT"):
+                "NODEMAVEN_MCP_ALLOW_WRITE", "NODEMAVEN_HOST", "NODEMAVEN_PORT"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("NODEMAVEN_APIKEY", "test-key")
     client = FakeClient()
@@ -62,10 +98,16 @@ def fake(monkeypatch):
     return client
 
 
+READ_TOOLS = {"proxy_url", "check_proxy", "test_proxy_on_site", "list_locations",
+              "account_status", "traffic_stats", "top_domains", "list_sub_users",
+              "list_whitelist_ips"}
+WRITE_TOOLS = {"create_sub_user", "update_sub_user", "reset_sub_user_usage",
+               "delete_sub_user", "add_whitelist_ip", "remove_whitelist_ip"}
+
+
 def test_tools_are_registered():
     names = {t.name for t in asyncio.run(srv.server.list_tools())}
-    assert names == {"proxy_url", "check_proxy", "list_locations", "account_status",
-                     "traffic_stats", "top_domains", "list_sub_users"}
+    assert names == READ_TOOLS | WRITE_TOOLS
 
 
 def test_proxy_url_hides_password_by_default(fake):
@@ -148,9 +190,12 @@ def test_locations_omit_unknown_total(fake):
     assert "total" not in srv.list_locations("countries")
 
 
-def test_every_tool_is_marked_read_only():
-    tools = asyncio.run(srv.server.list_tools())
-    assert all(t.annotations and t.annotations.read_only_hint for t in tools)
+def test_read_tools_are_read_only_and_write_tools_are_not():
+    tools = {t.name: t.annotations for t in asyncio.run(srv.server.list_tools())}
+    assert all(tools[name].read_only_hint for name in READ_TOOLS)
+    assert not any(tools[name].read_only_hint for name in WRITE_TOOLS)
+    assert {n for n in WRITE_TOOLS if tools[n].destructive_hint} == {
+        "reset_sub_user_usage", "delete_sub_user", "remove_whitelist_ip"}
 
 
 def test_locations_page_with_offset(fake):
@@ -174,3 +219,176 @@ def test_sub_users_page(fake):
     assert first["next_page"] == 2 and fake.calls[-1] == ("sub_users", {"page": 1})
     last = srv.list_sub_users(page=2)
     assert last["rows"] == [] and "next_page" not in last
+
+
+@pytest.fixture
+def writes(fake, monkeypatch):
+    monkeypatch.setenv("NODEMAVEN_MCP_ALLOW_WRITE", "1")
+    return fake
+
+
+@pytest.mark.parametrize("call", [
+    lambda: srv.create_sub_user("new1"),
+    lambda: srv.update_sub_user("1", traffic_limit=5),
+    lambda: srv.reset_sub_user_usage(["1"]),
+    lambda: srv.delete_sub_user("1"),
+    lambda: srv.add_whitelist_ip("192.0.2.7", 1),
+    lambda: srv.remove_whitelist_ip("3"),
+])
+def test_write_tools_refuse_unless_allowed(fake, call):
+    with pytest.raises(ToolError, match="NODEMAVEN_MCP_ALLOW_WRITE"):
+        call()
+    assert fake.calls == []
+
+
+def test_create_sub_user_generates_and_hides_the_password(writes):
+    out = srv.create_sub_user("new1", traffic_limit=1000)
+    _, username, password, extra = writes.calls[-1]
+    assert username == "new1" and len(password) == 32
+    assert extra == {"traffic_limit": 1000, "is_traffic_limited": True}
+    assert out["password"] == "<PROXY_PASSWORD>"
+    assert password not in json.dumps(out)
+
+
+def test_create_sub_user_reveals_the_password_when_allowed(writes, monkeypatch):
+    monkeypatch.setenv("NODEMAVEN_MCP_REVEAL_PASSWORD", "1")
+    out = srv.create_sub_user("new1")
+    assert out["password"] == writes.calls[-1][2]
+    assert writes.calls[-1][3] == {}
+
+
+def test_update_sub_user_needs_a_change_and_drops_the_password(writes):
+    with pytest.raises(ToolError, match="Nothing to change"):
+        srv.update_sub_user("1")
+    out = srv.update_sub_user("1", traffic_limit=500, is_traffic_limited=True)
+    assert writes.calls[-1] == ("update_sub_user", "1", {"traffic_limit": 500, "is_traffic_limited": True})
+    assert SECRET not in json.dumps(out)
+
+
+def test_reset_and_delete_sub_user(writes):
+    out = srv.reset_sub_user_usage(["1", "2"])
+    assert [r["id"] for r in out["rows"]] == ["1", "2"]
+    assert SECRET not in json.dumps(out)
+    assert srv.delete_sub_user("1") == {"deleted": "1"}
+    assert writes.calls[-1] == ("delete_sub_user", "1")
+
+
+def test_whitelist_listing_drops_fields_and_ends_on_404(fake):
+    out = srv.list_whitelist_ips()
+    assert out["rows"] == [{"id": 3, "ip": "192.0.2.7", "protocol": "HTTP",
+                            "ports": [10000, 10001], "number_of_proxies": 2}]
+    assert out["next_page"] == 2
+    assert srv.list_whitelist_ips(page=2) == {"page": 2, "rows": []}
+
+
+def test_add_whitelist_ip_sends_protocol_and_targeting(writes):
+    out = srv.add_whitelist_ip("192.0.2.7", 2, country="us", city="")
+    assert writes.calls[-1] == ("upsert_whitelist_ip", "192.0.2.7", 2,
+                                {"name": None, "protocol": "HTTP", "country": "us"})
+    assert out == {"ip_id": 3, "ip": "192.0.2.7", "message": "created"}
+    assert srv.remove_whitelist_ip("3") == {"removed": "3"}
+
+
+@pytest.mark.parametrize("status, body, blocked", [
+    (200, b"<html>results</html>", None),
+    (403, b"", "HTTP 403 (forbidden)"),
+    (429, b"", "HTTP 429 (rate limited)"),
+    (200, b"<title>Just a moment...</title>", "Cloudflare challenge"),
+    (200, b"<div class='g-recaptcha'></div>", "captcha"),
+    (202, b"<script src='https://x.awswaf.com/challenge.js'></script><noscript>"
+          b"we need to verify that you're not a robot</noscript>", "AWS WAF challenge"),
+])
+def test_site_check_reads_the_status_and_the_page(fake, monkeypatch, status, body, blocked):
+    seen = {}
+
+    def fetch(proxy_url, url):
+        seen["proxy"], seen["url"] = proxy_url, url
+        return status, url, body
+
+    monkeypatch.setattr(srv, "_fetch_through", fetch)
+    out = srv.test_proxy_on_site("https://example.com", country="de")
+    assert out["blocked"] == blocked
+    assert out["ok"] is (blocked is None)
+    assert out["bytes"] == len(body)
+    assert "acct_user-country-de" in seen["proxy"]
+    assert SECRET not in json.dumps(out)
+
+
+def test_site_check_refuses_a_non_http_url(fake):
+    with pytest.raises(ToolError, match="http or https"):
+        srv.test_proxy_on_site("file:///etc/passwd")
+
+
+def test_site_check_keeps_the_password_out_of_errors(fake, monkeypatch):
+    def fetch(proxy_url, url):
+        raise OSError(f"Tunnel connection failed via {proxy_url}")
+
+    monkeypatch.setattr(srv, "_fetch_through", fetch)
+    out = srv.test_proxy_on_site("https://example.com")
+    assert out["ok"] is False and "OSError" in out["error"]
+    assert "s3cr%40t" not in out["error"] and SECRET not in out["error"]
+
+
+def test_a_full_page_with_a_captcha_widget_is_not_a_block(fake, monkeypatch):
+    page = b"<form><div class='g-recaptcha'></div></form>" + b"x" * (srv.BLOCK_PAGE_MAX + 1)
+    monkeypatch.setattr(srv, "_fetch_through", lambda proxy_url, url: (200, url, page))
+    out = srv.test_proxy_on_site("https://example.com")
+    assert out["ok"] is True and out["blocked"] is None
+
+
+class FakeProxy(BaseHTTPRequestHandler):
+    seen = []
+    location = None
+
+    def do_GET(self):
+        FakeProxy.seen.append((self.path, self.headers.get("Proxy-Authorization")))
+        if FakeProxy.location and self.path.endswith("/start"):
+            self.send_response(302)
+            self.send_header("Location", FakeProxy.location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", "5")
+        self.end_headers()
+        self.wfile.write(b"hello")
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def fake_proxy(monkeypatch):
+    FakeProxy.seen, FakeProxy.location = [], None
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeProxy)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://u:p%40w@127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+def test_site_check_goes_through_the_proxy(fake_proxy):
+    status, _, body = srv._fetch_through(fake_proxy, "http://example.invalid/page")
+    assert (status, body) == (200, b"hello")
+    assert FakeProxy.seen == [("http://example.invalid/page", "Basic dTpwQHc=")]
+
+
+def test_site_check_ignores_no_proxy(fake_proxy, monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+    status, _, _ = srv._fetch_through(fake_proxy, "http://example.invalid/page")
+    assert status == 200 and FakeProxy.seen[0][0] == "http://example.invalid/page"
+
+
+def test_site_check_does_not_follow_a_redirect_off_http(fake_proxy):
+    FakeProxy.location = "ftp://files.example.invalid/x"
+    status, final_url, _ = srv._fetch_through(fake_proxy, "http://example.invalid/start")
+    assert status == 302 and final_url == "http://example.invalid/start"
+    assert len(FakeProxy.seen) == 1
+
+
+def test_site_check_follows_an_http_redirect_through_the_proxy(fake_proxy):
+    FakeProxy.location = "http://example.invalid/next"
+    status, final_url, body = srv._fetch_through(fake_proxy, "http://example.invalid/start")
+    assert (status, final_url, body) == (200, "http://example.invalid/next", b"hello")
+    assert [path for path, _ in FakeProxy.seen] == ["http://example.invalid/start",
+                                                     "http://example.invalid/next"]
