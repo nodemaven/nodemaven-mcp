@@ -12,13 +12,14 @@ placeholder unless ``NODEMAVEN_MCP_REVEAL_PASSWORD=1`` is set.
 
 from __future__ import annotations
 
+import base64
 import os
 import secrets
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Literal, Optional
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -63,6 +64,7 @@ SITE_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 )
+BLOCK_PAGE_MAX = 64 * 1024
 BLOCK_STATUSES = {401: "unauthorized", 403: "forbidden", 407: "proxy auth",
                   429: "rate limited", 503: "unavailable"}
 BLOCK_MARKERS = (
@@ -237,27 +239,69 @@ def check_proxy(
     }
 
 
+class _ThroughProxy(urllib.request.BaseHandler):
+    """Routes every http and https request through the proxy.
+
+    ``ProxyHandler`` consults ``NO_PROXY`` and the system bypass list, which would
+    send a matching site directly from this machine and report it as a proxy test.
+    """
+
+    handler_order = 100  # before the HTTP(S) handlers, like ProxyHandler
+
+    def __init__(self, proxy_url: str) -> None:
+        parts = urlsplit(proxy_url)
+        self.server = f"{parts.hostname}:{parts.port}"
+        user_pass = f"{unquote(parts.username or '')}:{unquote(parts.password or '')}"
+        self.auth = "Basic " + base64.b64encode(user_pass.encode()).decode("ascii")
+
+    def _route(self, req: urllib.request.Request) -> None:
+        req.add_header("Proxy-Authorization", self.auth)
+        req.set_proxy(self.server, "http")
+
+    http_open = https_open = _route
+
+
+class _HttpRedirectsOnly(urllib.request.HTTPRedirectHandler):
+    """Stops at a redirect to anything but http or https, which the proxy does not carry."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        if urlsplit(newurl).scheme not in ("http", "https"):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _fetch_through(proxy_url: str, url: str) -> tuple[int, str, bytes]:
     opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        urllib.request.ProxyHandler({}), _ThroughProxy(proxy_url), _HttpRedirectsOnly
     )
     request = urllib.request.Request(url, headers={
         "User-Agent": SITE_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     })
+    deadline = time.monotonic() + SITE_TIMEOUT
     try:
         response = opener.open(request, timeout=SITE_TIMEOUT)
     except urllib.error.HTTPError as e:
         response = e
     with response:
-        return response.getcode(), response.geturl(), response.read(SITE_READ_LIMIT)
+        body = bytearray()
+        while len(body) < SITE_READ_LIMIT and time.monotonic() < deadline:
+            chunk = response.read(min(64 * 1024, SITE_READ_LIMIT - len(body)))
+            if not chunk:
+                break
+            body += chunk
+        return response.getcode(), response.geturl(), bytes(body)
 
 
 def _block_reason(status: int, body: bytes) -> Optional[str]:
     if status in BLOCK_STATUSES:
         return f"HTTP {status} ({BLOCK_STATUSES[status]})"
-    text = body[:200_000].decode("utf-8", "replace").lower()
+    # Challenge pages are small; a full page that merely embeds a captcha widget
+    # or mentions "access denied" is not a refusal.
+    if status == 200 and len(body) > BLOCK_PAGE_MAX:
+        return None
+    text = body.decode("utf-8", "replace").lower()
     for marker, label in BLOCK_MARKERS:
         if marker in text:
             return label

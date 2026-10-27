@@ -329,29 +329,66 @@ def test_site_check_keeps_the_password_out_of_errors(fake, monkeypatch):
     assert "s3cr%40t" not in out["error"] and SECRET not in out["error"]
 
 
-def test_site_check_goes_through_the_proxy(fake):
-    seen = {}
+def test_a_full_page_with_a_captcha_widget_is_not_a_block(fake, monkeypatch):
+    page = b"<form><div class='g-recaptcha'></div></form>" + b"x" * (srv.BLOCK_PAGE_MAX + 1)
+    monkeypatch.setattr(srv, "_fetch_through", lambda proxy_url, url: (200, url, page))
+    out = srv.test_proxy_on_site("https://example.com")
+    assert out["ok"] is True and out["blocked"] is None
 
-    class Proxy(BaseHTTPRequestHandler):
-        def do_GET(self):
-            seen["path"] = self.path
-            seen["auth"] = self.headers.get("Proxy-Authorization")
-            self.send_response(200)
-            self.send_header("Content-Length", "5")
+
+class FakeProxy(BaseHTTPRequestHandler):
+    seen = []
+    location = None
+
+    def do_GET(self):
+        FakeProxy.seen.append((self.path, self.headers.get("Proxy-Authorization")))
+        if FakeProxy.location and self.path.endswith("/start"):
+            self.send_response(302)
+            self.send_header("Location", FakeProxy.location)
+            self.send_header("Content-Length", "0")
             self.end_headers()
-            self.wfile.write(b"hello")
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", "5")
+        self.end_headers()
+        self.wfile.write(b"hello")
 
-        def log_message(self, *args):
-            pass
+    def log_message(self, *args):
+        pass
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+
+@pytest.fixture
+def fake_proxy(monkeypatch):
+    FakeProxy.seen, FakeProxy.location = [], None
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeProxy)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    try:
-        port = httpd.server_address[1]
-        status, _, body = srv._fetch_through(f"http://u:p%40w@127.0.0.1:{port}",
-                                             "http://example.invalid/page")
-    finally:
-        httpd.shutdown()
+    yield f"http://u:p%40w@127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+def test_site_check_goes_through_the_proxy(fake_proxy):
+    status, _, body = srv._fetch_through(fake_proxy, "http://example.invalid/page")
     assert (status, body) == (200, b"hello")
-    assert seen["path"] == "http://example.invalid/page"
-    assert seen["auth"] and seen["auth"].startswith("Basic ")
+    assert FakeProxy.seen == [("http://example.invalid/page", "Basic dTpwQHc=")]
+
+
+def test_site_check_ignores_no_proxy(fake_proxy, monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+    status, _, _ = srv._fetch_through(fake_proxy, "http://example.invalid/page")
+    assert status == 200 and FakeProxy.seen[0][0] == "http://example.invalid/page"
+
+
+def test_site_check_does_not_follow_a_redirect_off_http(fake_proxy):
+    FakeProxy.location = "ftp://files.example.invalid/x"
+    status, final_url, _ = srv._fetch_through(fake_proxy, "http://example.invalid/start")
+    assert status == 302 and final_url == "http://example.invalid/start"
+    assert len(FakeProxy.seen) == 1
+
+
+def test_site_check_follows_an_http_redirect_through_the_proxy(fake_proxy):
+    FakeProxy.location = "http://example.invalid/next"
+    status, final_url, body = srv._fetch_through(fake_proxy, "http://example.invalid/start")
+    assert (status, final_url, body) == (200, "http://example.invalid/next", b"hello")
+    assert [path for path, _ in FakeProxy.seen] == ["http://example.invalid/start",
+                                                     "http://example.invalid/next"]

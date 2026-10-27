@@ -58,7 +58,9 @@ async def main() -> int:
         print("set NODEMAVEN_APIKEY first")
         return 2
     password = Client().me()["proxy_password"]
-    params = StdioServerParameters(command=shutil.which("nodemaven-mcp"), env=dict(os.environ))
+    # Without the reveal flag, so no password - the account's or a new sub-user's - is printed.
+    env = {k: v for k, v in os.environ.items() if k != "NODEMAVEN_MCP_REVEAL_PASSWORD"}
+    params = StdioServerParameters(command=shutil.which("nodemaven-mcp"), env=env)
     leaks = 0
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

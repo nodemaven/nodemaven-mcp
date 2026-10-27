@@ -27,6 +27,11 @@
           "name": "NODEMAVEN_MCP_ALLOW_WRITE",
           "description": "Set to 1 to allow the tools that change the account (sub-users, whitelisted IPs)",
           "isRequired": false
+        },
+        {
+          "name": "NODEMAVEN_MCP_REVEAL_PASSWORD",
+          "description": "Set to 1 to include real proxy passwords in proxy_url and create_sub_user results",
+          "isRequired": false
         }
       ]
     }
