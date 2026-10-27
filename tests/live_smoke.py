@@ -1,7 +1,9 @@
 """Call every tool of the installed `nodemaven-mcp` over stdio against the live API.
 
 Needs NODEMAVEN_APIKEY in the environment. Prints results without secrets, and
-fails if the account's proxy password appears in any tool result.
+fails if the account's proxy password appears in any tool result. With
+NODEMAVEN_MCP_ALLOW_WRITE=1 it also creates a sub-user and a whitelisted IP
+(SMOKE_WHITELIST_IP, default 192.0.2.10), changes them and deletes them.
 Run: python tests/live_smoke.py
 """
 
@@ -10,6 +12,7 @@ import json
 import os
 import shutil
 import sys
+import time
 
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -27,7 +30,27 @@ CALLS = (
     ("top_domains", {"limit": 3}),
     ("list_sub_users", {}),
     ("list_sub_users", {"page": 2}),
+    ("list_whitelist_ips", {}),
+    ("test_proxy_on_site", {"url": "https://example.com", "country": "us"}),
+    ("test_proxy_on_site", {"url": "https://example.com", "country": "de",
+                            "session_id": "smoke1", "ttl": "10m"}),
 )
+
+
+def write_calls(results: dict) -> list:
+    """The write cycle, built step by step from earlier results."""
+    name = f"smoke_delete_me_{int(time.time())}"
+    ip = os.environ.get("SMOKE_WHITELIST_IP", "192.0.2.10")
+    return [
+        ("create_sub_user", lambda: {"username": name, "traffic_limit": 1000}),
+        ("update_sub_user", lambda: {"sub_user_id": str(results["create_sub_user"]["id"]),
+                                     "traffic_limit": 2000}),
+        ("reset_sub_user_usage", lambda: {"sub_user_ids": [str(results["create_sub_user"]["id"])]}),
+        ("delete_sub_user", lambda: {"sub_user_id": str(results["create_sub_user"]["id"])}),
+        ("add_whitelist_ip", lambda: {"ip": ip, "ports_count": 1, "name": "smoke"}),
+        ("list_whitelist_ips", lambda: {}),
+        ("remove_whitelist_ip", lambda: {"ip_id": str(results["add_whitelist_ip"]["ip_id"])}),
+    ]
 
 
 async def main() -> int:
@@ -40,9 +63,20 @@ async def main() -> int:
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            for name, args in CALLS:
+            results: dict = {}
+            calls = [(n, (lambda a=a: a)) for n, a in CALLS]
+            if os.environ.get("NODEMAVEN_MCP_ALLOW_WRITE") == "1":
+                calls += write_calls(results)
+            for name, make_args in calls:
+                try:
+                    args = make_args()
+                except (KeyError, TypeError):
+                    print(f"{name}: skipped, an earlier step failed")
+                    continue
                 result = await session.call_tool(name, args)
                 payload = result.structured_content or [c.text for c in result.content]
+                if not result.is_error:
+                    results[name] = payload
                 text = json.dumps(payload)
                 if password and password in text:
                     leaks += 1
