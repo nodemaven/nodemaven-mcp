@@ -1,5 +1,7 @@
 # nodemaven-mcp
 
+[![2 GB free with code GITHUB](https://img.shields.io/badge/%F0%9F%8E%81%202%20GB%20free-code%20GITHUB-1153FC)](https://dashboard.nodemaven.com/accounts/signup/?utm_source=github&utm_medium=readme&utm_campaign=nodemaven_mcp&utm_content=promo_badge)
+
 An [MCP](https://modelcontextprotocol.io) server for [NodeMaven](https://nodemaven.com)
 residential proxies. It lets an AI assistant build proxy strings with geo-targeting
 and sticky sessions, check that a proxy connects and where it exits, test it against
@@ -42,7 +44,9 @@ The server has no tools for payments, plans or API keys.
 
 You need an API key from the NodeMaven dashboard. The proxy username and password are
 read from the account through that key, so nothing else is required.
-No account yet? [Sign up](https://dashboard.nodemaven.com/accounts/signup/?utm_source=github&utm_medium=readme&utm_campaign=nodemaven_mcp&utm_content=signup_promo) and enter the code **GITHUB** for 2 GB of free traffic, once per account.
+
+> [!TIP]
+> 🎁 **2 GB of free traffic.** No account yet? [Sign up](https://dashboard.nodemaven.com/accounts/signup/?utm_source=github&utm_medium=readme&utm_campaign=nodemaven_mcp&utm_content=signup_promo) and enter the code **GITHUB**. Once per account.
 
 Claude Desktop (`claude_desktop_config.json`), Cursor and other MCP clients:
 
