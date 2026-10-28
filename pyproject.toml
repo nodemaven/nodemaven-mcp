@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nodemaven-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "MCP server for NodeMaven residential proxies: proxy strings with geo-targeting and sticky sessions, connection and site checks, locations, usage, sub-users and whitelisted IPs."
 readme = "README.md"
 license = "MIT"

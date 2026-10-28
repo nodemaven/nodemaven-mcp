@@ -392,3 +392,18 @@ def test_site_check_follows_an_http_redirect_through_the_proxy(fake_proxy):
     assert (status, final_url, body) == (200, "http://example.invalid/next", b"hello")
     assert [path for path, _ in FakeProxy.seen] == ["http://example.invalid/start",
                                                      "http://example.invalid/next"]
+
+
+def test_missing_api_key_points_to_sign_up(monkeypatch):
+    monkeypatch.delenv("NODEMAVEN_APIKEY", raising=False)
+    monkeypatch.setattr(srv, "state", srv._State())
+    with pytest.raises(ToolError, match="accounts/signup.*MCPNM"):
+        srv.account_status()
+
+
+def test_account_status_notes_an_empty_balance(fake, monkeypatch):
+    assert "note" not in srv.account_status()
+    me = fake.me
+    monkeypatch.setattr(fake, "me", lambda: {**me(), "data": 0})
+    out = srv.account_status()
+    assert "No traffic left" in out["note"] and "MCPNM" in out["note"]
