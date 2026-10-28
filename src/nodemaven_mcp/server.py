@@ -226,7 +226,8 @@ def check_proxy(
 
     Sends no traffic through the tunnel. Returns the gateway status, the exit
     IP when the gateway reports it, and how long the connection took. A 407 can
-    mean a wrong parameter value as well as wrong credentials.
+    mean a wrong parameter value as well as wrong credentials. For mobile, take
+    the location codes from list_locations with connection_type="mobile".
     """
     try:
         result = _build_proxy(
@@ -340,6 +341,8 @@ def test_proxy_on_site(
     a refusal (403, 429, a captcha or a challenge page). The page itself is not
     returned. A plain HTTP request is a weaker test than a browser: a site that
     needs JavaScript can refuse it and still serve the same proxy in a browser.
+    For mobile, take the location codes from list_locations with
+    connection_type="mobile".
     """
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
