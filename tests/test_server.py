@@ -132,6 +132,30 @@ def test_proxy_url_socks5(fake):
     assert out["port"] == 1080
 
 
+def test_proxy_url_mobile_names_the_type_and_residential_leaves_it_out(fake):
+    mobile = srv.proxy_url(country="us", connection_type="mobile")
+    assert mobile["username"] == "acct_user-country-us-type-mobile"
+    residential = srv.proxy_url(country="us", connection_type="residential")
+    assert residential["username"] == "acct_user-country-us"
+
+
+def test_check_and_site_test_take_the_connection_type(fake, monkeypatch):
+    seen = []
+    real = srv._build_proxy
+
+    def spy(protocol, connection_type="residential", **params):
+        proxy = real(protocol, connection_type, **params)
+        seen.append(proxy.username)
+        raise srv.NodeMavenError("stop here")
+
+    monkeypatch.setattr(srv, "_build_proxy", spy)
+    for call in (lambda: srv.check_proxy(connection_type="mobile"),
+                 lambda: srv.test_proxy_on_site("https://example.com", connection_type="mobile")):
+        with pytest.raises(ToolError):
+            call()
+    assert seen == ["acct_user-type-mobile"] * 2
+
+
 def test_env_credentials_skip_the_api(fake, monkeypatch):
     monkeypatch.setenv("NODEMAVEN_LOGIN", "env_user")
     monkeypatch.setenv("NODEMAVEN_PASSWORD", "env_pw")

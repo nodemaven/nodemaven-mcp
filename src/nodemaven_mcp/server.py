@@ -150,9 +150,13 @@ def _params(**values: Any) -> dict[str, str]:
     return {k: str(v) for k, v in values.items() if v not in (None, "")}
 
 
-def _build_proxy(protocol: str, **params: Any) -> Proxy:
+def _build_proxy(protocol: str, connection_type: str = "residential", **params: Any) -> Proxy:
     login, password = state.credentials()
     port = SOCKS5_PORT if protocol == "socks5" else None
+    # Without `type` the gateway draws from the residential pool, so only mobile
+    # is named: residential usernames stay as they were, and so do their sessions.
+    if connection_type == "mobile":
+        params["type"] = "mobile"
     return Proxy(login=login, password=password, port=port, **_params(**params))
 
 
@@ -166,6 +170,7 @@ def proxy_url(
     ttl: Optional[str] = None,
     filter: Optional[str] = None,
     protocol: Literal["http", "socks5"] = "http",
+    connection_type: Literal["residential", "mobile"] = "residential",
 ) -> dict[str, Any]:
     """Build a NodeMaven proxy string.
 
@@ -173,11 +178,14 @@ def proxy_url(
     new exit IP; with session_id the same exit is kept for ttl (e.g. "10m",
     "1h", "24h"). country is a two-letter code; region, city and isp take the
     codes from list_locations. filter is the IP quality filter, e.g. "medium".
+    connection_type picks residential or mobile IPs; for mobile, take the
+    location codes from list_locations with connection_type="mobile".
     The password is a placeholder unless the server allows revealing it.
     """
     try:
         proxy = _build_proxy(
             protocol,
+            connection_type,
             country=country,
             region=region,
             city=city,
@@ -212,16 +220,19 @@ def check_proxy(
     session_id: Optional[str] = None,
     ttl: Optional[str] = None,
     filter: Optional[str] = None,
+    connection_type: Literal["residential", "mobile"] = "residential",
 ) -> dict[str, Any]:
     """Open one connection through the proxy and report the result.
 
     Sends no traffic through the tunnel. Returns the gateway status, the exit
     IP when the gateway reports it, and how long the connection took. A 407 can
-    mean a wrong parameter value as well as wrong credentials.
+    mean a wrong parameter value as well as wrong credentials. For mobile, take
+    the location codes from list_locations with connection_type="mobile".
     """
     try:
         result = _build_proxy(
             "http",
+            connection_type,
             country=country,
             region=region,
             city=city,
@@ -321,6 +332,7 @@ def test_proxy_on_site(
     session_id: Optional[str] = None,
     ttl: Optional[str] = None,
     filter: Optional[str] = None,
+    connection_type: Literal["residential", "mobile"] = "residential",
 ) -> dict[str, Any]:
     """Request one page of a site through the proxy and say whether it answered.
 
@@ -329,6 +341,8 @@ def test_proxy_on_site(
     a refusal (403, 429, a captcha or a challenge page). The page itself is not
     returned. A plain HTTP request is a weaker test than a browser: a site that
     needs JavaScript can refuse it and still serve the same proxy in a browser.
+    For mobile, take the location codes from list_locations with
+    connection_type="mobile".
     """
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
@@ -336,6 +350,7 @@ def test_proxy_on_site(
     try:
         proxy = _build_proxy(
             "http",
+            connection_type,
             country=country,
             region=region,
             city=city,
