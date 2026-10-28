@@ -27,6 +27,8 @@ from mcp.types import ToolAnnotations
 from nodemaven import Client, NodeMavenError, NotFoundError, Proxy
 
 PASSWORD_PLACEHOLDER = "<PROXY_PASSWORD>"
+SIGNUP_URL = "https://dashboard.nodemaven.com/accounts/signup/"
+PROMO = "the code MCPNM gives 2 GB of free traffic, once per account"
 SOCKS5_PORT = 1080
 MAX_ROWS = 100
 DOMAIN_FETCH_LIMIT = 1000
@@ -104,7 +106,8 @@ class _State:
             if not os.environ.get("NODEMAVEN_APIKEY"):
                 raise NodeMavenError(
                     "NODEMAVEN_APIKEY is not set. Create an API key in the NodeMaven "
-                    "dashboard and pass it in the server's environment."
+                    "dashboard and pass it in the server's environment. No account yet? "
+                    f"Sign up at {SIGNUP_URL} - {PROMO}."
                 )
             self._client = Client()
         return self._client
@@ -406,9 +409,12 @@ def list_locations(
 def account_status() -> dict[str, Any]:
     """Remaining traffic (bytes), subscription status and whether traffic is frozen."""
     try:
-        return _pick(state.client().me(), ACCOUNT_FIELDS)
+        out = _pick(state.client().me(), ACCOUNT_FIELDS)
     except NodeMavenError as e:
         raise ToolError(str(e)) from e
+    if isinstance(out.get("data"), (int, float)) and out["data"] <= 0:
+        out["note"] = f"No traffic left. Top up in the NodeMaven dashboard; {PROMO}."
+    return out
 
 
 def _domain_row(row: Any) -> Optional[dict[str, Any]]:
