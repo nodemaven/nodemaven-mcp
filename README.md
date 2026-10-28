@@ -17,8 +17,8 @@ allow writes.
 
 | Tool | What it does |
 |---|---|
-| `proxy_url` | Proxy string for a country, region, city or ISP, with an optional sticky session and its lifetime. HTTP or SOCKS5. |
-| `check_proxy` | Opens one connection through the proxy and returns the status, the exit IP and the time it took. |
+| `proxy_url` | Proxy string for a country, region, city or ISP, with an optional sticky session and its lifetime. Residential or mobile IPs, HTTP or SOCKS5. |
+| `check_proxy` | Opens one connection through the proxy and returns the status, the exit IP and the time it took. Residential or mobile. |
 | `test_proxy_on_site` | Requests one page of a site through the proxy and reports the status, size, time, and whether it looks blocked (403, 429, captcha or challenge page). The page is not returned. |
 | `list_locations` | Countries, regions, cities and ISPs available for targeting, with the codes `proxy_url` takes. |
 | `account_status` | Remaining traffic, subscription status, whether traffic is frozen. |
