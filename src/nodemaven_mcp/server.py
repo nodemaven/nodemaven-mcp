@@ -18,6 +18,7 @@ import secrets
 import time
 import urllib.error
 import urllib.request
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Literal, Optional
 from urllib.parse import quote, unquote, urlsplit
 
@@ -96,10 +97,47 @@ server = MCPServer(
 )
 
 
+def _client_token(value: object) -> Optional[str]:
+    """The MCP client's own name as one token that is safe in a header."""
+    if not isinstance(value, str):
+        return None
+    kept = "".join(c if c.isascii() and (c.isalnum() or c in "._-") else " " for c in value)
+    return "-".join(kept.lower().split())[:64].strip("-") or None
+
+
+def _product() -> str:
+    try:
+        return f"nodemaven-mcp/{version('nodemaven-mcp')}"
+    except PackageNotFoundError:
+        return "nodemaven-mcp"
+
+
 class _State:
     def __init__(self) -> None:
         self._client: Optional[Client] = None
         self._credentials: Optional[tuple[str, str]] = None
+        #: The connected MCP client's name, once it has introduced itself.
+        self.client_name: Optional[str] = None
+
+    def user_agent(self, base: str = "") -> str:
+        """What API requests are sent as: the SDK's own product, this server's
+        and, in brackets, the MCP client that is calling."""
+        client = f" ({self.client_name})" if self.client_name else ""
+        return f"{base} {_product()}{client}".strip()
+
+    def _transport(self):
+        """The SDK's transport with this server named in User-Agent; None, and
+        so the SDK's default, where the SDK has no such transport to wrap."""
+        try:
+            from nodemaven.api import _urllib_transport as send
+        except ImportError:
+            return None
+
+        def transport(method, url, headers, body):
+            agent = self.user_agent(headers.get("User-Agent", ""))
+            return send(method, url, {**headers, "User-Agent": agent}, body)
+
+        return transport
 
     def client(self) -> Client:
         if self._client is None:
@@ -109,7 +147,7 @@ class _State:
                     "dashboard and pass it in the server's environment. No account yet? "
                     f"Sign up at {SIGNUP_URL} - {PROMO}."
                 )
-            self._client = Client()
+            self._client = Client(transport=self._transport())
         return self._client
 
     def credentials(self) -> tuple[str, str]:
@@ -124,6 +162,19 @@ class _State:
 
 
 state = _State()
+
+
+async def _note_client(ctx, call_next):
+    """Remember who is calling. Never the reason a call fails."""
+    if state.client_name is None:
+        try:
+            state.client_name = _client_token(ctx.session.client_params.client_info.name)
+        except Exception:
+            pass
+    return await call_next(ctx)
+
+
+server.middleware.append(_note_client)
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=True)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
