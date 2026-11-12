@@ -489,3 +489,12 @@ def test_the_calling_client_is_noted_once_and_never_fails_a_call(monkeypatch):
     assert state.client_name is None
     assert asyncio.run(srv._note_client(Named, call_next)) == "answer"
     assert state.client_name == "cursor"
+
+    class Other(Named):
+        class session:
+            class client_params:
+                class client_info:
+                    name = "Another"
+
+    assert asyncio.run(srv._note_client(Other, call_next)) == "answer"
+    assert state.client_name == "cursor"
