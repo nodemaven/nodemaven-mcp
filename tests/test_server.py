@@ -431,3 +431,61 @@ def test_account_status_notes_an_empty_balance(fake, monkeypatch):
     monkeypatch.setattr(fake, "me", lambda: {**me(), "data": 0})
     out = srv.account_status()
     assert "No traffic left" in out["note"] and "MCPNM" in out["note"]
+
+
+def test_client_name_becomes_one_header_safe_token():
+    assert srv._client_token("Claude Code") == "claude-code"
+    assert srv._client_token("cursor\r\nX-Injected: 1") == "cursor-x-injected-1"
+    assert srv._client_token("x" * 200) == "x" * 64
+    assert srv._client_token("  ") is None and srv._client_token(None) is None
+
+
+def test_api_requests_name_the_server_and_the_calling_client(monkeypatch):
+    seen = []
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.headers.get("User-Agent"))
+            body = json.dumps({"proxy_username": "u", "data": 1}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Api)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setenv("NODEMAVEN_APIKEY", "test-key")
+    monkeypatch.setenv("NODEMAVEN_BASE_URL", f"http://127.0.0.1:{httpd.server_port}")
+    state = srv._State()
+    monkeypatch.setattr(srv, "state", state)
+    try:
+        srv.account_status()
+        state.client_name = "claude-code"
+        srv.account_status()
+    finally:
+        httpd.shutdown()
+    assert seen[0].startswith("nodemaven-python nodemaven-mcp") and "(" not in seen[0]
+    assert seen[1].endswith(" (claude-code)")
+
+
+def test_the_calling_client_is_noted_once_and_never_fails_a_call(monkeypatch):
+    state = srv._State()
+    monkeypatch.setattr(srv, "state", state)
+
+    class Named:
+        class session:
+            class client_params:
+                class client_info:
+                    name = "Cursor"
+
+    async def call_next(ctx):
+        return "answer"
+
+    assert asyncio.run(srv._note_client(object(), call_next)) == "answer"
+    assert state.client_name is None
+    assert asyncio.run(srv._note_client(Named, call_next)) == "answer"
+    assert state.client_name == "cursor"

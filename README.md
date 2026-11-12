@@ -83,6 +83,10 @@ server keeps secrets out of them:
 - `test_proxy_on_site` returns no page content, and removes the proxy password
   from connection errors.
 
+Requests to the NodeMaven API carry this server's version and the name the MCP
+client gives itself (for example `claude-code`) in `User-Agent`. Nothing else
+about the client or the conversation is sent.
+
 ## Development
 
 ```bash
