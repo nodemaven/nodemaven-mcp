@@ -29,4 +29,4 @@ packages = ["src/nodemaven_mcp"]
 
 
 [tool.hatch.build.targets.sdist]
-include = ["src/", "tests/", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src/", "tests/", "README.md", "LICENSE", "pyproject.toml", "gemini-extension.json", "GEMINI.md"]
