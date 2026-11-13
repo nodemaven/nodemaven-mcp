@@ -6,10 +6,15 @@
   "mcpServers": {
     "nodemaven": {
       "command": "uvx",
-      "args": ["nodemaven-mcp"],
-      "env": {
-        "NODEMAVEN_APIKEY": "$NODEMAVEN_APIKEY"
-      }
+      "args": ["nodemaven-mcp==0.2.3"]
     }
-  }
+  },
+  "settings": [
+    {
+      "name": "NodeMaven API key",
+      "description": "Dashboard API key, from Profile in the NodeMaven dashboard (not the proxy password)",
+      "envVar": "NODEMAVEN_APIKEY",
+      "sensitive": true
+    }
+  ]
 }
