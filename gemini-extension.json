@@ -1,0 +1,15 @@
+{
+  "name": "nodemaven",
+  "version": "0.2.3",
+  "description": "NodeMaven residential and mobile proxies: geo-targeted proxy URLs, proxy checks and account usage",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "nodemaven": {
+      "command": "uvx",
+      "args": ["nodemaven-mcp"],
+      "env": {
+        "NODEMAVEN_APIKEY": "$NODEMAVEN_APIKEY"
+      }
+    }
+  }
+}

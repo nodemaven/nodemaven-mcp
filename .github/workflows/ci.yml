@@ -29,7 +29,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
       - run: python -m pip install . pytest
-      - run: python -m pytest -q tests/test_server.py
+      - run: python -m pytest -q tests/test_server.py tests/test_gemini_extension.py
 
   # One stable name for branch protection, independent of the matrix.
   ci-ok:
