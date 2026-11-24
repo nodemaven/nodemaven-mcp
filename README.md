@@ -1,6 +1,7 @@
 # nodemaven-mcp
 
 [![2 GB free with code GITHUB](https://img.shields.io/badge/%F0%9F%8E%81%202%20GB%20free-code%20GITHUB-1153FC)](https://dashboard.nodemaven.com/accounts/signup/?utm_source=github&utm_medium=readme&utm_campaign=nodemaven_mcp&utm_content=promo_badge)
+[![nodemaven/nodemaven-mcp MCP server](https://glama.ai/mcp/servers/nodemaven/nodemaven-mcp/badges/score.svg)](https://glama.ai/mcp/servers/nodemaven/nodemaven-mcp)
 
 An [MCP](https://modelcontextprotocol.io) server for [NodeMaven](https://nodemaven.com)
 residential proxies. It lets an AI assistant build proxy strings with geo-targeting
